@@ -77,6 +77,7 @@
          <term file="dlib/dnn/core_abstract.h.html" name="layer" include="dlib/dnn.h"/>
          <term file="dlib/dnn/core_abstract.h.html" name="input_layer" include="dlib/dnn.h"/>
          <term file="dlib/dnn/core_abstract.h.html" name="visit_layers" include="dlib/dnn.h"/>
+         <term file="dlib/dnn/core_abstract.h.html" name="visit_layers_until_tag" include="dlib/dnn.h"/>
          <term file="dlib/dnn/core_abstract.h.html" name="visit_layer_parameters" include="dlib/dnn.h"/>
          <term file="dlib/dnn/core_abstract.h.html" name="visit_layer_parameter_gradients" include="dlib/dnn.h"/>
          <term file="dlib/dnn/core_abstract.h.html" name="visit_layers_backwards" include="dlib/dnn.h"/>
@@ -169,6 +170,7 @@
          <term file="linear_algebra.html" name="resize_rect_height" include="dlib/geometry.h"/>
          <term file="linear_algebra.html" name="centered_rect" include="dlib/geometry.h"/>
          <term file="linear_algebra.html" name="set_aspect_ratio" include="dlib/geometry.h"/>
+         <term file="linear_algebra.html" name="set_rect_area" include="dlib/geometry.h"/>
          <term file="linear_algebra.html" name="center" include="dlib/geometry.h"/>
          <term file="linear_algebra.html" name="nearest_point" include="dlib/geometry.h"/>
          <term file="linear_algebra.html" name="nearest_rect" include="dlib/geometry.h"/>
