@@ -28,7 +28,7 @@ endif()
 # Set only because there are old target_link_libraries() statements in the
 # FindCUDA.cmake file that comes with CMake that error out if the new behavior
 # is used.
-cmake_policy(SET CMP0023 OLD)
+# cmake_policy(SET CMP0023 OLD)
 
 
 macro (enable_preprocessor_switch option_name)
