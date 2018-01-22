@@ -22,9 +22,7 @@
 #include "../data_io/image_dataset_metadata.cpp"
 #include "../data_io/mnist.cpp"
 
-// Stuff that requires C++11
-#include "../dnn/cpu_dlib.cpp"
-#include "../dnn/tensor_tools.cpp"
+
 
 
 #ifndef DLIB_ISO_CPP_ONLY
@@ -82,7 +80,14 @@
 #include "../gui_core/gui_core_kernel_2.cpp"
 #endif // DLIB_NO_GUI_SUPPORT
 
+#include "../dnn/cpu_dlib.cpp"
+#include "../dnn/tensor_tools.cpp"
+
 #endif // DLIB_ISO_CPP_ONLY
+
+
+
+#include "../global_optimization/global_function_search.cpp"
 
 
 #define DLIB_ALL_SOURCE_END
