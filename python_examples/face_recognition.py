@@ -36,9 +36,9 @@
 #   installed.
 #
 #   Compiling dlib should work on any operating system so long as you have
-#   CMake and boost-python installed.  On Ubuntu, this can be done easily by
-#   running the command:
-#       sudo apt-get install libboost-python-dev cmake
+#   CMake installed.  On Ubuntu, this can be done easily by running the
+#   command:
+#       sudo apt-get install cmake
 #
 #   Also note that this example requires scikit-image which can be installed
 #   via the command:
@@ -54,9 +54,9 @@ from skimage import io
 if len(sys.argv) != 4:
     print(
         "Call this program like this:\n"
-        "   ./face_recognition.py shape_predictor_68_face_landmarks.dat dlib_face_recognition_resnet_model_v1.dat ../examples/faces\n"
+        "   ./face_recognition.py shape_predictor_5_face_landmarks.dat dlib_face_recognition_resnet_model_v1.dat ../examples/faces\n"
         "You can download a trained facial shape predictor and recognition model from:\n"
-        "    http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2\n"
+        "    http://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2\n"
         "    http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2")
     exit()
 
@@ -101,7 +101,7 @@ for f in glob.glob(os.path.join(faces_folder_path, "*.jpg")):
         # Compute the 128D vector that describes the face in img identified by
         # shape.  In general, if two face descriptor vectors have a Euclidean
         # distance between them less than 0.6 then they are from the same
-        # person, otherwise they are from different people.  He we just print
+        # person, otherwise they are from different people. Here we just print
         # the vector to the screen.
         face_descriptor = facerec.compute_face_descriptor(img, shape)
         print(face_descriptor)
