@@ -4,6 +4,7 @@
 #ifdef DLIB_SHAPE_PREDICToR_TRAINER_ABSTRACT_H_
 
 #include "shape_predictor_abstract.h"
+#include "../data_io/image_dataset_metadata.h"
 
 namespace dlib
 {
@@ -38,6 +39,7 @@ namespace dlib
                 - #get_feature_pool_region_padding() == 0
                 - #get_random_seed() == ""
                 - #get_num_threads() == 0
+                - #get_padding_mode() == landmark_relative 
                 - This object will not be verbose
         !*/
 
@@ -180,16 +182,53 @@ namespace dlib
                 - #get_feature_pool_size() == size
         !*/
 
+        enum padding_mode_t
+        {
+            bounding_box_relative,
+            landmark_relative 
+        };
+
+        padding_mode_t get_padding_mode (
+        ) const; 
+        /*!
+            ensures
+                - returns the current padding mode.  See get_feature_pool_region_padding()
+                  for a discussion of the modes.
+        !*/
+
+        void set_padding_mode (
+            padding_mode_t mode
+        );
+        /*!
+            ensures
+                - #get_padding_mode() == mode
+        !*/
+
         double get_feature_pool_region_padding (
         ) const; 
         /*!
             ensures
-                - When we randomly sample the pixels for the feature pool we do so in a box
-                  fit around the provided training landmarks.  By default, this box is the
-                  tightest box that contains the landmarks (i.e. this is what happens when
-                  get_feature_pool_region_padding()==0).  However, you can expand or shrink
-                  the size of the pixel sampling region by setting a different value of
-                  get_feature_pool_region_padding().  
+                - This algorithm works by comparing the relative intensity of pairs of
+                  pixels in the input image.  To decide which pixels to look at, the
+                  training algorithm randomly selects pixels from a box roughly centered
+                  around the object of interest.  We call this box the feature pool region
+                  box.  
+                  
+                  Each object of interest is defined by a full_object_detection, which
+                  contains a bounding box and a list of landmarks.  If
+                  get_padding_mode()==landmark_relative then the feature pool region box is
+                  the tightest box that contains the landmarks inside the
+                  full_object_detection.  In this mode the full_object_detection's bounding
+                  box is ignored.  Otherwise, if the padding mode is bounding_box_relative
+                  then the feature pool region box is the tightest box that contains BOTH
+                  the landmarks and the full_object_detection's bounding box.
+
+                  Additionally, you can adjust the size of the feature pool padding region
+                  by setting get_feature_pool_region_padding() to some value.  If
+                  get_feature_pool_region_padding()==0 then the feature pool region box is
+                  unmodified and defined exactly as stated above. However, you can expand
+                  the size of the box by setting the padding > 0 or shrink it by setting it
+                  to something < 0.
 
                   To explain this precisely, for a padding of 0 we say that the pixels are
                   sampled from a box of size 1x1.  The padding value is added to each side
@@ -203,10 +242,11 @@ namespace dlib
             double padding 
         );
         /*!
+            requires
+                - padding > -0.5
             ensures
                 - #get_feature_pool_region_padding() == padding
         !*/
-
 
         double get_lambda (
         ) const;
@@ -325,6 +365,43 @@ namespace dlib
                   those missing parts.
         !*/
     };
+
+// ----------------------------------------------------------------------------------------
+
+    template <
+        typename some_type_of_rectangle
+        >
+    image_dataset_metadata::dataset make_bounding_box_regression_training_data (
+        const image_dataset_metadata::dataset& truth,
+        const std::vector<std::vector<some_type_of_rectangle>>& detections
+    );
+    /*!
+        requires
+            - truth.images.size() == detections.size()
+            - some_type_of_rectangle == rectangle, drectangle, mmod_rect, or any other type
+              that is convertible to a rectangle.
+        ensures
+            - Suppose you have an object detector that can roughly locate objects in an
+              image.  This means your detector draws boxes around objects, but these are
+              *rough* boxes in the sense that they aren't positioned super accurately.  For
+              instance, HOG based detectors usually have a stride of 8 pixels.  So the
+              positional accuracy is going to be, at best, +/-8 pixels.  
+              
+              If you want to get better positional accuracy one easy thing to do is train a
+              shape_predictor to give you the corners of the object.  The
+              make_bounding_box_regression_training_data() routine helps you do this by
+              creating an appropriate training dataset.  It does this by taking the dataset
+              you used to train your detector (the truth object), and combining that with
+              the output of your detector on each image in the training dataset (the
+              detections object).  In particular, it will create a new annotated dataset
+              where each object box is one of the rectangles from detections and that
+              object has 4 part annotations, the corners of the truth rectangle
+              corresponding to that detection rectangle.  You can then take the returned
+              dataset and train a shape_predictor on it.  The resulting shape_predictor can
+              then be used to do bounding box regression.
+            - We assume that detections[i] contains object detections corresponding to 
+              the image truth.images[i].
+    !*/
 
 // ----------------------------------------------------------------------------------------
 

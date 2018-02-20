@@ -21,9 +21,11 @@ struct layer
     string type; // comp, loss, or input
     int idx;
 
+    matrix<long,4,1> output_tensor_shape; // (N,K,NR,NC)
+
     string detail_name; // The name of the tag inside the layer tag. e.g. fc, con, max_pool, input_rgb_image.
     std::map<string,double> attributes;
-    matrix<double> params;
+    matrix<float> params;
     long tag_id = -1;   // If this isn't -1 then it means this layer was tagged, e.g. wrapped with tag2<> giving tag_id==2
     long skip_id = -1;  // If this isn't -1 then it means this layer draws its inputs from
                         // the most recent layer with tag_id==skip_id rather than its immediate predecessor. 
@@ -49,30 +51,32 @@ struct layer
 // ----------------------------------------------------------------------------------------
 
 std::vector<layer> parse_dlib_xml(
+    const matrix<long,4,1>& input_tensor_shape, 
     const string& xml_filename
 );
 
 // ----------------------------------------------------------------------------------------
 
 template <typename iterator>
-string find_layer_caffe_name (
+const layer& find_layer (
     iterator i,
     long tag_id
 )
 /*!
     requires
-        - i is an iterator pointing to a layer in the list of layers produced by parse_dlib_xml().
+        - i is a reverse iterator pointing to a layer in the list of layers produced by parse_dlib_xml().
         - i is not an input layer.
     ensures
         - if (tag_id == -1) then
-            - returns the caffe string name for the previous layer to layer i.
+            - returns the previous layer (i.e. closer to the input) to layer i.
         - else
-            - returns the caffe string name for the previous layer to layer i with the given tag_id.
+            - returns the previous layer (i.e. closer to the input) to layer i with the
+              given tag_id.
 !*/
 {
     if (tag_id == -1)
     {
-        return (i-1)->caffe_layer_name();
+        return *(i-1);
     }
     else
     {
@@ -81,7 +85,7 @@ string find_layer_caffe_name (
             i--;
             // if we hit the end of the network before we found what we were looking for
             if (i->tag_id == tag_id)
-                return i->caffe_layer_name();
+                return *i;
             if (i->type == "input")
                 throw dlib::error("Network definition is bad, a layer wanted to skip back to a non-existing layer.");
         }
@@ -89,30 +93,122 @@ string find_layer_caffe_name (
 }
 
 template <typename iterator>
-string find_input_layer_caffe_name (iterator i) { return find_layer_caffe_name(i, i->skip_id); }
+const layer& find_input_layer (iterator i) { return find_layer(i, i->skip_id); }
+
+template <typename iterator>
+string find_layer_caffe_name (
+    iterator i,
+    long tag_id
+)
+{
+    return find_layer(i,tag_id).caffe_layer_name();
+}
+
+template <typename iterator>
+string find_input_layer_caffe_name (iterator i) { return find_input_layer(i).caffe_layer_name(); }
 
 // ----------------------------------------------------------------------------------------
 
-template <typename EXP>
-void print_as_np_array(std::ostream& out, const matrix_exp<EXP>& m)
+template <typename iterator>
+void compute_caffe_padding_size_for_pooling_layer(
+    const iterator& i,
+    long& pad_x,
+    long& pad_y
+)
+/*!
+    requires
+        - i is a reverse iterator pointing to a layer in the list of layers produced by parse_dlib_xml().
+        - i is not an input layer.
+    ensures
+        - Caffe is funny about how it computes the output sizes from pooling layers.
+          Rather than using the normal formula for output row/column sizes used by all the
+          other layers (and what dlib uses everywhere), 
+            floor((bottom_size + 2*pad - kernel_size) / stride) + 1
+          it instead uses:
+            ceil((bottom_size + 2*pad - kernel_size) / stride) + 1
+
+          These are the same except when the stride!=1.  In that case we need to figure out
+          how to change the padding value so that the output size of the caffe padding
+          layer will match the output size of the dlib padding layer.   That is what this
+          function does.
+!*/
 {
-    out << "np.array([";
-    for (auto x : m)
-        out << x << ",";
-    out << "], dtype='float32')";
+    const long dlib_output_nr = i->output_tensor_shape(2);
+    const long dlib_output_nc = i->output_tensor_shape(3);
+    const long bottom_nr = find_input_layer(i).output_tensor_shape(2);
+    const long bottom_nc = find_input_layer(i).output_tensor_shape(3);
+    const long padding_x = (long)i->attribute("padding_x");
+    const long padding_y = (long)i->attribute("padding_y");
+    const long stride_x = (long)i->attribute("stride_x");
+    const long stride_y = (long)i->attribute("stride_y");
+    long kernel_w = i->attribute("nc");
+    long kernel_h = i->attribute("nr");
+
+    if (kernel_w == 0)
+        kernel_w = bottom_nc;
+    if (kernel_h == 0)
+        kernel_h = bottom_nr;
+
+    
+    // The correct padding for caffe could be anything in the range [0,padding_x].  So
+    // check what gives the correct output size and use that.
+    for (pad_x = 0; pad_x <= padding_x; ++pad_x)
+    {
+        long caffe_out_size = ceil((bottom_nc + 2.0*pad_x - kernel_w)/(double)stride_x) + 1;
+        if (caffe_out_size == dlib_output_nc)
+            break;
+    }
+    if (pad_x == padding_x+1)
+    {
+        std::ostringstream sout;
+        sout << "No conversion between dlib pooling layer parameters and caffe pooling layer parameters found for layer " << to_string(i->idx) << endl;
+        sout << "dlib_output_nc: " << dlib_output_nc << endl;
+        sout << "bottom_nc:      " << bottom_nc << endl;
+        sout << "padding_x:      " << padding_x << endl;
+        sout << "stride_x:       " << stride_x << endl;
+        sout << "kernel_w:       " << kernel_w << endl;
+        sout << "pad_x:          " << pad_x << endl;
+        throw dlib::error(sout.str());
+    }
+
+    for (pad_y = 0; pad_y <= padding_y; ++pad_y)
+    {
+        long caffe_out_size = ceil((bottom_nr + 2.0*pad_y - kernel_h)/(double)stride_y) + 1;
+        if (caffe_out_size == dlib_output_nr)
+            break;
+    }
+    if (pad_y == padding_y+1)
+    {
+        std::ostringstream sout;
+        sout << "No conversion between dlib pooling layer parameters and caffe pooling layer parameters found for layer " << to_string(i->idx) << endl;
+        sout << "dlib_output_nr: " << dlib_output_nr << endl;
+        sout << "bottom_nr:      " << bottom_nr << endl;
+        sout << "padding_y:      " << padding_y << endl;
+        sout << "stride_y:       " << stride_y << endl;
+        sout << "kernel_h:       " << kernel_h << endl;
+        sout << "pad_y:          " << pad_y << endl;
+        throw dlib::error(sout.str());
+    }
 }
 
 // ----------------------------------------------------------------------------------------
 
 void convert_dlib_xml_to_caffe_python_code(
-    const string& xml_filename
+    const string& xml_filename,
+    const long N,
+    const long K,
+    const long NR,
+    const long NC
 )
 {
     const string out_filename = left_substr(xml_filename,".") + "_dlib_to_caffe_model.py";
-    cout << "Writing model to " << out_filename << endl;
+    const string out_weights_filename = left_substr(xml_filename,".") + "_dlib_to_caffe_model.weights";
+    cout << "Writing python part of model to " << out_filename << endl;
+    cout << "Writing weights part of model to " << out_weights_filename << endl;
     ofstream fout(out_filename);
     fout.precision(9);
-    const auto layers = parse_dlib_xml(xml_filename);
+    const auto layers = parse_dlib_xml({N,K,NR,NC}, xml_filename);
+
 
     fout << "#\n";
     fout << "# !!! This file was automatically generated by dlib's tools/convert_dlib_nets_to_caffe utility.     !!!\n";
@@ -124,26 +220,34 @@ void convert_dlib_xml_to_caffe_python_code(
 
     // dlib nets don't commit to a batch size, so just use 1 as the default
     fout << "\n# Input tensor dimensions" << endl;
-    fout << "batch_size = 1;" << endl;
+    fout << "input_batch_size = " << N << ";" << endl;
     if (layers.back().detail_name == "input_rgb_image")
     {
-        cout << "WARNING: The source dlib network didn't commit to a specific input tensor size, we are using a default size of 28x28x1 which is appropriate for MNIST input.  But if you are using different inputs you will need to edit the auto-generated python script to tell it your input size." << endl;
-        fout << "input_nr = 28; #WARNING, the source dlib network didn't commit to a specific input size, so we put 28 here as a default.  It might not be the right value." << endl;
-        fout << "input_nc = 28; #WARNING, the source dlib network didn't commit to a specific input size, so we put 28 here as a default.  It might not be the right value." << endl;
-        fout << "input_k = 3;" << endl;
+        fout << "input_num_channels = 3;" << endl;
+        fout << "input_num_rows = "<<NR<<";" << endl;
+        fout << "input_num_cols = "<<NC<<";" << endl;
+        if (K != 3)
+            throw dlib::error("The dlib model requires input tensors with NUM_CHANNELS==3, but the dtoc command line specified NUM_CHANNELS=="+to_string(K));
     }
     else if (layers.back().detail_name == "input_rgb_image_sized")
     {
-        fout << "input_nr = " << layers.back().attribute("nr") << ";" << endl;
-        fout << "input_nc = " << layers.back().attribute("nc") << ";" << endl;
-        fout << "input_k = 3;" << endl;
+        fout << "input_num_channels = 3;" << endl;
+        fout << "input_num_rows = " << layers.back().attribute("nr") << ";" << endl;
+        fout << "input_num_cols = " << layers.back().attribute("nc") << ";" << endl;
+        if (NR != layers.back().attribute("nr"))
+            throw dlib::error("The dlib model requires input tensors with NUM_ROWS=="+to_string((long)layers.back().attribute("nr"))+", but the dtoc command line specified NUM_ROWS=="+to_string(NR));
+        if (NC != layers.back().attribute("nc"))
+            throw dlib::error("The dlib model requires input tensors with NUM_COLUMNS=="+to_string((long)layers.back().attribute("nc"))+", but the dtoc command line specified NUM_COLUMNS=="+to_string(NC));
+        if (K != 3)
+            throw dlib::error("The dlib model requires input tensors with NUM_CHANNELS==3, but the dtoc command line specified NUM_CHANNELS=="+to_string(K));
     }
     else if (layers.back().detail_name == "input")
     {
-        cout << "WARNING: The source dlib network didn't commit to a specific input tensor size, we are using a default size of 28x28x1 which is appropriate for MNIST input.  But if you are using different inputs you will need to edit the auto-generated python script to tell it your input size." << endl;
-        fout << "input_nr = 28; #WARNING, the source dlib network didn't commit to a specific input size, so we put 28 here as a default.  It might not be the right value." << endl;
-        fout << "input_nc = 28; #WARNING, the source dlib network didn't commit to a specific input size, so we put 28 here as a default.  It might not be the right value." << endl;
-        fout << "input_k = 1;" << endl;
+        fout << "input_num_channels = 1;" << endl;
+        fout << "input_num_rows = "<<NR<<";" << endl;
+        fout << "input_num_cols = "<<NC<<";" << endl;
+        if (K != 1)
+            throw dlib::error("The dlib model requires input tensors with NUM_CHANNELS==1, but the dtoc command line specified NUM_CHANNELS=="+to_string(K));
     }
     else
     {
@@ -173,7 +277,7 @@ void convert_dlib_xml_to_caffe_python_code(
     fout << "    # For reference, the only \"documentation\" about caffe layer parameters seems to be this page:\n";
     fout << "    # https://github.com/BVLC/caffe/blob/master/src/caffe/proto/caffe.proto\n" << endl;
     fout << "    n = caffe.NetSpec(); " << endl;
-    fout << "    n.data,n.label = L.MemoryData(batch_size=batch_size, channels=input_k, height=input_nr, width=input_nc, ntop=2)" << endl;
+    fout << "    n.data,n.label = L.MemoryData(batch_size=input_batch_size, channels=input_num_channels, height=input_num_rows, width=input_num_cols, ntop=2)" << endl;
     // iterate the layers starting with the input layer
     for (auto i = layers.rbegin(); i != layers.rend(); ++i)
     {
@@ -226,8 +330,10 @@ void convert_dlib_xml_to_caffe_python_code(
 
             fout << ", stride_w=" << i->attribute("stride_x");
             fout << ", stride_h=" << i->attribute("stride_y");
-            fout << ", pad_w=" << i->attribute("padding_x");
-            fout << ", pad_h=" << i->attribute("padding_y");
+            long pad_x, pad_y;
+            compute_caffe_padding_size_for_pooling_layer(i, pad_x, pad_y);
+            fout << ", pad_w=" << pad_x;
+            fout << ", pad_h=" << pad_y;
             fout << ");\n";
         }
         else if (i->detail_name == "avg_pool")
@@ -251,8 +357,10 @@ void convert_dlib_xml_to_caffe_python_code(
 
             fout << ", stride_w=" << i->attribute("stride_x");
             fout << ", stride_h=" << i->attribute("stride_y");
-            fout << ", pad_w=" << i->attribute("padding_x");
-            fout << ", pad_h=" << i->attribute("padding_y");
+            long pad_x, pad_y;
+            compute_caffe_padding_size_for_pooling_layer(i, pad_x, pad_y);
+            fout << ", pad_w=" << pad_x;
+            fout << ", pad_h=" << pad_y;
             fout << ");\n";
         }
         else if (i->detail_name == "fc")
@@ -289,10 +397,59 @@ void convert_dlib_xml_to_caffe_python_code(
         }
         else if (i->detail_name == "add_prev")
         {
-            fout << "    n." << i->caffe_layer_name() << " = L.Eltwise(n." << find_input_layer_caffe_name(i);
-            fout << ", n." << find_layer_caffe_name(i, i->attribute("tag"));
-            fout << ", operation=P.Eltwise.SUM";
-            fout << ");\n";
+            auto in_shape1 = find_input_layer(i).output_tensor_shape;
+            auto in_shape2 = find_layer(i,i->attribute("tag")).output_tensor_shape;
+            if (in_shape1 != in_shape2)
+            {
+                // if only the number of channels differs then we will use a dummy layer to
+                // pad with zeros.  But otherwise we will throw an error.
+                if (in_shape1(0) == in_shape2(0) && 
+                    in_shape1(2) == in_shape2(2) && 
+                    in_shape1(3) == in_shape2(3))
+                {
+                    fout << "    n." << i->caffe_layer_name() << "_zeropad = L.DummyData(num=" << in_shape1(0);
+                    fout << ", channels="<<std::abs(in_shape1(1)-in_shape2(1));
+                    fout << ", height="<<in_shape1(2);
+                    fout << ", width="<<in_shape1(3);
+                    fout << ");\n";
+
+                    string smaller_layer = find_input_layer_caffe_name(i);
+                    string bigger_layer = find_layer_caffe_name(i, i->attribute("tag"));
+                    if (in_shape1(1) > in_shape2(1))
+                        swap(smaller_layer, bigger_layer);
+
+                    fout << "    n." << i->caffe_layer_name() << "_concat = L.Concat(n." << smaller_layer;
+                    fout << ", n." << i->caffe_layer_name() << "_zeropad";
+                    fout << ");\n";
+
+                    fout << "    n." << i->caffe_layer_name() << " = L.Eltwise(n." << i->caffe_layer_name() << "_concat";
+                    fout << ", n." << bigger_layer;
+                    fout << ", operation=P.Eltwise.SUM";
+                    fout << ");\n";
+                }
+                else
+                {
+                    std::ostringstream sout;
+                    sout << "The dlib network contained an add_prev layer (layer idx " << i->idx << ") that adds two previous ";
+                    sout << "layers with different output tensor dimensions.  Caffe's equivalent layer, Eltwise, doesn't support ";
+                    sout << "adding layers together with different dimensions.  In the special case where the only difference is "; 
+                    sout << "in the number of channels, this converter program will add a dummy layer that outputs a tensor full of zeros ";
+                    sout << "and concat it appropriately so this will work.  However, this network you are converting has tensor dimensions ";
+                    sout << "different in values other than the number of channels.  In particular, here are the two tensor shapes (batch size, channels, rows, cols): ";
+                    std::ostringstream sout2;
+                    sout2 << wrap_string(sout.str()) << endl;
+                    sout2 << trans(in_shape1);
+                    sout2 << trans(in_shape2);
+                    throw dlib::error(sout2.str());
+                }
+            }
+            else
+            {
+                fout << "    n." << i->caffe_layer_name() << " = L.Eltwise(n." << find_input_layer_caffe_name(i);
+                fout << ", n." << find_layer_caffe_name(i, i->attribute("tag"));
+                fout << ", operation=P.Eltwise.SUM";
+                fout << ");\n";
+            }
         }
         else
         {
@@ -306,8 +463,10 @@ void convert_dlib_xml_to_caffe_python_code(
     //  The next block of code outputs python code that populates all the filter weights.
     // -----------------------------------------------------------------------------------
 
+    ofstream fweights(out_weights_filename, ios::binary);
     fout << "def set_network_weights(net):\n";
     fout << "    # populate network parameters\n";
+    fout << "    f = open('"<<out_weights_filename<<"', 'rb');\n";
     // iterate the layers starting with the input layer
     for (auto i = layers.rbegin(); i != layers.rend(); ++i)
     {
@@ -319,56 +478,63 @@ void convert_dlib_xml_to_caffe_python_code(
         if (i->detail_name == "con")
         {
             const long num_filters = i->attribute("num_filters");
-            matrix<double> weights = trans(rowm(i->params,range(0,i->params.size()-num_filters-1)));
-            matrix<double> biases  = trans(rowm(i->params,range(i->params.size()-num_filters, i->params.size()-1)));
+            matrix<float> weights = trans(rowm(i->params,range(0,i->params.size()-num_filters-1)));
+            matrix<float> biases  = trans(rowm(i->params,range(i->params.size()-num_filters, i->params.size()-1)));
+            fweights.write((char*)&weights(0,0), weights.size()*sizeof(float));
+            fweights.write((char*)&biases(0,0), biases.size()*sizeof(float));
 
             // main filter weights
-            fout << "    p = "; print_as_np_array(fout,weights); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<weights.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][0].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][0].data[:] = p;\n";
 
             // biases
-            fout << "    p = "; print_as_np_array(fout,biases); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<biases.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][1].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][1].data[:] = p;\n";
         }
         else if (i->detail_name == "fc")
         {
-            matrix<double> weights = trans(rowm(i->params, range(0,i->params.nr()-2))); 
-            matrix<double> biases  = rowm(i->params, i->params.nr()-1); 
+            matrix<float> weights = trans(rowm(i->params, range(0,i->params.nr()-2))); 
+            matrix<float> biases  = rowm(i->params, i->params.nr()-1); 
+            fweights.write((char*)&weights(0,0), weights.size()*sizeof(float));
+            fweights.write((char*)&biases(0,0), biases.size()*sizeof(float));
 
             // main filter weights
-            fout << "    p = "; print_as_np_array(fout,weights); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<weights.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][0].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][0].data[:] = p;\n";
 
             // biases
-            fout << "    p = "; print_as_np_array(fout,biases); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<biases.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][1].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][1].data[:] = p;\n";
         }
         else if (i->detail_name == "fc_no_bias")
         {
-            matrix<double> weights = trans(i->params); 
+            matrix<float> weights = trans(i->params); 
+            fweights.write((char*)&weights(0,0), weights.size()*sizeof(float));
 
             // main filter weights
-            fout << "    p = "; print_as_np_array(fout,weights); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<weights.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][0].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][0].data[:] = p;\n";
         }
         else if (i->detail_name == "affine_con" || i->detail_name == "affine_fc")
         {
             const long dims = i->params.size()/2;
-            matrix<double> gamma = trans(rowm(i->params,range(0,dims-1)));
-            matrix<double> beta  = trans(rowm(i->params,range(dims, 2*dims-1)));
+            matrix<float> gamma = trans(rowm(i->params,range(0,dims-1)));
+            matrix<float> beta  = trans(rowm(i->params,range(dims, 2*dims-1)));
+            fweights.write((char*)&gamma(0,0), gamma.size()*sizeof(float));
+            fweights.write((char*)&beta(0,0), beta.size()*sizeof(float));
 
             // set gamma weights
-            fout << "    p = "; print_as_np_array(fout,gamma); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<gamma.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][0].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][0].data[:] = p;\n";
 
             // set beta weights 
-            fout << "    p = "; print_as_np_array(fout,beta); fout << ";\n";
+            fout << "    p = np.fromfile(f, dtype='float32', count="<<beta.size()<<");\n"; 
             fout << "    p.shape = net.params['"<<i->caffe_layer_name()<<"'][1].data.shape;\n";
             fout << "    net.params['"<<i->caffe_layer_name()<<"'][1].data[:] = p;\n";
         }
@@ -389,15 +555,24 @@ void convert_dlib_xml_to_caffe_python_code(
 
 int main(int argc, char** argv) try
 {
-    if (argc == 1)
+    if (argc != 6)
     {
-        cout << "Give this program an xml file generated by dlib::net_to_xml() and it will" << endl;
-        cout << "convert it into a python file that outputs a caffe model containing the dlib model." << endl;
+        cout << "To use this program, give it an xml file generated by dlib::net_to_xml() " << endl;
+        cout << "and then 4 numbers that indicate the input tensor size.  It will convert " << endl;
+        cout << "the xml file into a python file that outputs a caffe model containing the dlib model." << endl;
+        cout << "For example, you might run this program like this: " << endl;
+        cout << "   ./dtoc lenet.xml 1 1 28 28" << endl;
+        cout << "would convert the lenet.xml model into a caffe model with an input tensor of shape(1,1,28,28)" << endl;
+        cout << "where the shape values are (num samples in batch, num channels, num rows, num columns)." << endl;
         return 0;
     }
 
-    for (int i = 1; i < argc; ++i)
-        convert_dlib_xml_to_caffe_python_code(argv[i]);
+    const long N = sa = argv[2];
+    const long K = sa = argv[3];
+    const long NR = sa = argv[4];
+    const long NC = sa = argv[5];
+
+    convert_dlib_xml_to_caffe_python_code(argv[1], N, K, NR, NC);
 
     return 0;
 }
@@ -435,7 +610,7 @@ public:
     ) { }
 
     virtual void start_element ( 
-        const unsigned long line_number,
+        const unsigned long /*line_number*/,
         const std::string& name,
         const dlib::attribute_list& atts
     )
@@ -493,7 +668,7 @@ public:
     }
 
     virtual void end_element ( 
-        const unsigned long line_number,
+        const unsigned long /*line_number*/,
         const std::string& name
     )
     {
@@ -518,9 +693,9 @@ public:
     }
 
     virtual void processing_instruction (
-        const unsigned long line_number,
-        const std::string& target,
-        const std::string& data
+        const unsigned long /*line_number*/,
+        const std::string& /*target*/,
+        const std::string& /*data*/
     )
     {
     }
@@ -528,7 +703,75 @@ public:
 
 // ----------------------------------------------------------------------------------------
 
+void compute_output_tensor_shapes(const matrix<long,4,1>& input_tensor_shape, std::vector<layer>& layers)
+{
+    DLIB_CASSERT(layers.back().type == "input");
+    layers.back().output_tensor_shape = input_tensor_shape;
+    for (auto i = ++layers.rbegin(); i != layers.rend(); ++i)
+    {
+        const auto input_shape = find_input_layer(i).output_tensor_shape;
+        if (i->type == "comp")
+        {
+            if (i->detail_name == "fc" || i->detail_name == "fc_no_bias")
+            {
+                long num_outputs = i->attribute("num_outputs");
+                i->output_tensor_shape = {input_shape(0), num_outputs, 1, 1};
+            }
+            else if (i->detail_name == "con")
+            {
+                long num_filters = i->attribute("num_filters");
+                long filter_nc = i->attribute("nc");
+                long filter_nr = i->attribute("nr");
+                long stride_x = i->attribute("stride_x");
+                long stride_y = i->attribute("stride_y");
+                long padding_x = i->attribute("padding_x");
+                long padding_y = i->attribute("padding_y");
+                long nr = 1+(input_shape(2) + 2*padding_y - filter_nr)/stride_y;
+                long nc = 1+(input_shape(3) + 2*padding_x - filter_nc)/stride_x;
+                i->output_tensor_shape = {input_shape(0), num_filters, nr, nc};
+            }
+            else if (i->detail_name == "max_pool" || i->detail_name == "avg_pool")
+            {
+                long filter_nc = i->attribute("nc");
+                long filter_nr = i->attribute("nr");
+                long stride_x = i->attribute("stride_x");
+                long stride_y = i->attribute("stride_y");
+                long padding_x = i->attribute("padding_x");
+                long padding_y = i->attribute("padding_y");
+                if (filter_nc != 0)
+                {
+                    long nr = 1+(input_shape(2) + 2*padding_y - filter_nr)/stride_y;
+                    long nc = 1+(input_shape(3) + 2*padding_x - filter_nc)/stride_x;
+                    i->output_tensor_shape = {input_shape(0), input_shape(1), nr, nc};
+                }
+                else // if we are filtering the whole input down to one thing
+                {
+                    i->output_tensor_shape = {input_shape(0), input_shape(1), 1, 1};
+                }
+            }
+            else if (i->detail_name == "add_prev")
+            {
+                auto aux_shape = find_layer(i, i->attribute("tag")).output_tensor_shape;
+                for (long j = 0; j < input_shape.size(); ++j)
+                    i->output_tensor_shape(j) = std::max(input_shape(j), aux_shape(j));
+            }
+            else
+            {
+                i->output_tensor_shape = input_shape;
+            }
+        }
+        else
+        {
+            i->output_tensor_shape = input_shape;
+        }
+
+    }
+}
+
+// ----------------------------------------------------------------------------------------
+
 std::vector<layer> parse_dlib_xml(
+    const matrix<long,4,1>& input_tensor_shape, 
     const string& xml_filename
 )
 {
@@ -539,6 +782,8 @@ std::vector<layer> parse_dlib_xml(
 
     if (dh.layers.back().type != "input")
         throw dlib::error("The network in the XML file is missing an input layer!");
+
+    compute_output_tensor_shapes(input_tensor_shape, dh.layers);
 
     return dh.layers;
 }

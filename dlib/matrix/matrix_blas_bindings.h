@@ -410,6 +410,18 @@ namespace dlib
         template <typename T, long NR, long NC, typename MM>
         int get_ld (const assignable_sub_matrix<T,NR,NC,MM,column_major_layout>& m) { return m.m.nr(); }
 
+        template <typename T, long NR, long NC, typename MM>
+        int get_ld (const assignable_col_matrix<T,NR,NC,MM,row_major_layout>& m) { return m.m.nc(); }
+
+        template <typename T, long NR, long NC, typename MM>
+        int get_ld (const assignable_col_matrix<T,NR,NC,MM,column_major_layout>& m) { return m.m.nr(); }
+
+        template <typename T, long NR, long NC, typename MM>
+        int get_ld (const assignable_row_matrix<T,NR,NC,MM,row_major_layout>& m) { return m.m.nc(); }
+
+        template <typename T, long NR, long NC, typename MM>
+        int get_ld (const assignable_row_matrix<T,NR,NC,MM,column_major_layout>& m) { return m.m.nr(); }
+
         template <typename T>
         int get_ld (const assignable_ptr_matrix<T>& m) { return m.nc(); }
 
@@ -424,7 +436,7 @@ namespace dlib
         template <typename T>
         int get_ld (const matrix_op<op_pointer_to_col_vect<T> >& m) { return m.nc(); }
         template <typename T>
-        int get_ld (const matrix_op<op_pointer_to_mat<T> >& m) { return m.nc(); }
+        int get_ld (const matrix_op<op_pointer_to_mat<T> >& m) { return m.op.stride; }
 
         // --------
 
@@ -443,7 +455,7 @@ namespace dlib
         template <typename T>
         int get_inc (const matrix_op<op_pointer_to_col_vect<T> >& ) { return 1; }
         template <typename T>
-        int get_inc (const matrix_op<op_pointer_to_mat<T> >& ) { return 1; }
+        int get_inc (const matrix_op<op_pointer_to_mat<T> >& m) { return m.op.stride==m.op.cols ? 1 : 0; }
 
         template <typename T, long NR, long NC, typename MM, typename L>
         int get_inc (const matrix<T,NR,NC,MM,L>& ) { return 1; }
