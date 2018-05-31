@@ -136,7 +136,13 @@ namespace dlib
 
         // set up the defaults
         auto_flush_table.val = true;
-        streambuf_table.val = std::cout.rdbuf(); 
+        #if defined (ANDROID)
+        // NOTE: Android has not cout :(
+        streambuf_table.val = nullptr;
+        #else
+        streambuf_table.val = std::cout.rdbuf();
+        #endif
+
         header_table.val = print_default_logger_header;
 
         // also allocate an initial buffer for hook based logging
@@ -495,4 +501,3 @@ namespace dlib
 }
 
 #endif // DLIB_LOGGER_KERNEL_1_CPp_
-
