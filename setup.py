@@ -15,7 +15,8 @@ To package the wheel (after pip installing twine and wheel):
 To upload the binary wheel to PyPi
     twine upload dist/*.whl
 To upload the source distribution to PyPi
-    python setup.py sdist upload
+    python setup.py sdist 
+    twine upload dist/dlib-*.tar.gz
 To exclude/include certain options in the cmake config use --yes and --no:
     for example:
     --yes USE_AVX_INSTRUCTIONS: will set -DUSE_AVX_INSTRUCTIONS=yes
@@ -26,6 +27,7 @@ Additional options:
     --clean: delete any previous build folders and rebuild.  You should do this if you change any build options
              by setting --compiler-flags or --yes or --no since last time you ran a build to make sure the changes
              take effect.
+    --set: set arbitrary options e.g. --set CUDA_HOST_COMPILER=/usr/bin/gcc-6.4.0
 """
 import os
 import re
@@ -43,7 +45,7 @@ from distutils.version import LooseVersion
 
 
 def get_extra_cmake_options():
-    """read --clean, --yes, --no, --compiler-flags, and -G options from the command line and add them as cmake switches.
+    """read --clean, --yes, --no, --set, --compiler-flags, and -G options from the command line and add them as cmake switches.
     """
     _cmake_extra_options = []
     _clean_build_folder = False
@@ -61,6 +63,8 @@ def get_extra_cmake_options():
             _cmake_extra_options.append('-D{arg}=yes'.format(arg=arg.strip()))
         elif opt_key == 'no':
             _cmake_extra_options.append('-D{arg}=no'.format(arg=arg.strip()))
+        elif opt_key == 'set':
+            _cmake_extra_options.append('-D{arg}'.format(arg=arg.strip()))
 
         if opt_key:
             sys.argv.remove(arg)
@@ -72,7 +76,7 @@ def get_extra_cmake_options():
             sys.argv.remove(arg)
             continue
 
-        if arg in ['--yes', '--no', '--compiler-flags']:
+        if arg in ['--yes', '--no', '--set', '--compiler-flags']:
             opt_key = arg[2:].lower()
             sys.argv.remove(arg)
             continue
@@ -113,13 +117,16 @@ class CMakeBuild(build_ext):
         try:
             out = subprocess.check_output(['cmake', '--version'])
         except OSError:
-            raise RuntimeError("CMake must be installed to build the following extensions: " +
-                               ", ".join(e.name for e in self.extensions))
+            raise RuntimeError("\n*******************************************************************\n" +
+                                  " CMake must be installed to build the following extensions: " +
+                               ", ".join(e.name for e in self.extensions) + 
+                               "\n*******************************************************************\n")
         return re.search(r'version\s*([\d.]+)', out.decode()).group(1)
 
     def run(self):
+        cmake_version = self.get_cmake_version()
         if platform.system() == "Windows":
-            if LooseVersion(self.get_cmake_version()) < '3.1.0':
+            if LooseVersion(cmake_version) < '3.1.0':
                 raise RuntimeError("CMake >= 3.1.0 is required on Windows")
 
         for ext in self.extensions:
@@ -156,9 +163,12 @@ class CMakeBuild(build_ext):
         cmake_setup = ['cmake', ext.sourcedir] + cmake_args
         cmake_build = ['cmake', '--build', '.'] + build_args
 
+        print("Building extension for Python {}".format(sys.version.split('\n',1)[0]))
         print("Invoking CMake setup: '{}'".format(' '.join(cmake_setup)))
+        sys.stdout.flush()
         subprocess.check_call(cmake_setup, cwd=build_folder)
         print("Invoking CMake build: '{}'".format(' '.join(cmake_build)))
+        sys.stdout.flush()
         subprocess.check_call(cmake_build, cwd=build_folder)
 
 def num_available_cpu_cores(ram_per_build_process_in_gb):
@@ -185,7 +195,7 @@ class PyTest(TestCommand):
 
     def initialize_options(self):
         TestCommand.initialize_options(self)
-        self.pytest_args = ''
+        self.pytest_args = '--ignore docs --ignore dlib'
 
     def run_tests(self):
         import shlex
@@ -211,7 +221,7 @@ setup(
     name='dlib',
     version=read_version_from_cmakelists('dlib/CMakeLists.txt'),
     description='A toolkit for making real world machine learning and data analysis applications',
-    long_description=read_entire_file('README.md'),
+    long_description='See http://dlib.net for documentation.',
     author='Davis King',
     author_email='davis@dlib.net',
     url='https://github.com/davisking/dlib',
