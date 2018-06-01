@@ -20,8 +20,8 @@ include(cmake_utils/use_cpp_11.cmake)
 
 
 set(CPACK_PACKAGE_VERSION_MAJOR "19")
-set(CPACK_PACKAGE_VERSION_MINOR "8")
-set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_PACKAGE_VERSION_MINOR "9")
+set(CPACK_PACKAGE_VERSION_PATCH "99")
 set(VERSION ${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH})
 # Set DLIB_VERSION in the including CMake file so they can use it to do whatever they want. 
 get_directory_property(has_parent PARENT_DIRECTORY)
@@ -283,7 +283,7 @@ if (NOT TARGET dlib)
                message(" *****************************************************************************")
                message(" *** DLIB GUI SUPPORT DISABLED BECAUSE X11 DEVELOPMENT LIBRARIES NOT FOUND ***")
                message(" *** Make sure XQuartz is installed if you want GUI support.               ***")
-               message(" *** You can download XQuartz from: http://xquartz.macosforge.org/landing/ ***")
+               message(" *** You can download XQuartz from: https://www.xquartz.org/               ***")
                message(" *****************************************************************************")
                set(DLIB_NO_GUI_SUPPORT ON CACHE STRING ${DLIB_NO_GUI_SUPPORT_STR} FORCE )
                enable_preprocessor_switch(DLIB_NO_GUI_SUPPORT)
@@ -584,9 +584,15 @@ if (NOT TARGET dlib)
                try_compile(cuda_test_compile_worked ${PROJECT_BINARY_DIR}/cuda_test_build 
                            ${PROJECT_SOURCE_DIR}/cmake_utils/test_for_cuda cuda_test
                            CMAKE_FLAGS ${CUDA_TEST_CMAKE_FLAGS}
+                           OUTPUT_VARIABLE try_compile_output_message
                            )
                if (NOT cuda_test_compile_worked)
-                  message(STATUS "*** CUDA was found but your compiler failed to compile a simple CUDA program so dlib isn't going to use CUDA. ***")
+                  string(REPLACE "\n" "\n   ***   " try_compile_output_message "${try_compile_output_message}")
+                  message(STATUS "*****************************************************************************************************************")
+                  message(STATUS "*** CUDA was found but your compiler failed to compile a simple CUDA program so dlib isn't going to use CUDA. ")
+                  message(STATUS "*** The output of the failed CUDA test compile is shown below: ")
+                  message(STATUS "***   ${try_compile_output_message}")
+                  message(STATUS "*****************************************************************************************************************")
                else()
                   message(STATUS "Checking if you have the right version of cuDNN installed.")
                   try_compile(cudnn_test_compile_worked ${PROJECT_BINARY_DIR}/cudnn_test_build 
@@ -807,6 +813,20 @@ if (NOT TARGET dlib)
 
    endif()
 
+endif()
+
+if (MSVC)
+   # Give the output library files names that are unique functions of the
+   # visual studio mode that compiled them.  We do this so that people who
+   # compile dlib and then copy the .lib files around (which they shouldn't be
+   # doing in the first place!) will hopefully be slightly less confused by
+   # what happens since, at the very least, the filenames will indicate what
+   # visual studio runtime they go with.
+   math(EXPR numbits ${CMAKE_SIZEOF_VOID_P}*8)
+   set_target_properties(dlib PROPERTIES DEBUG_POSTFIX "_debug_${numbits}bit_msvc${MSVC_VERSION}")
+   set_target_properties(dlib PROPERTIES RELEASE_POSTFIX "_release_${numbits}bit_msvc${MSVC_VERSION}")
+   set_target_properties(dlib PROPERTIES MINSIZEREL_POSTFIX "_minsizerel_${numbits}bit_msvc${MSVC_VERSION}")
+   set_target_properties(dlib PROPERTIES RELWITHDEBINFO_POSTFIX "_relwithdebinfo_${numbits}bit_msvc${MSVC_VERSION}")
 endif()
 
 add_library(dlib::dlib ALIAS dlib)
